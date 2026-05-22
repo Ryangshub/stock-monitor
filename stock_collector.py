@@ -482,10 +482,11 @@ def update_chart(ws, price_col: int = 4, num_fmt: str = FMT_KRW):
                            min_row=min_row, max_row=max_row)
     chart.add_data(price_ref)
 
-    # 시리즈 스타일: 진한 파란 실선, 스무딩
+    # 시리즈 스타일: 스무딩만 적용
+    # graphicalProperties.line.solidFill / .width 는 load+재생성 사이클에서
+    # openpyxl이 내부 axId를 재발급할 때 crossAx 참조가 깨져 drawing*.xml을
+    # 손상시키는 원인으로 확인됨 → 제거하고 chart.style 로만 색상 제어.
     s = chart.series[0]
-    s.graphicalProperties.line.solidFill = "1F4E79"
-    s.graphicalProperties.line.width     = 20000   # 약 1.6 pt
     s.smooth = True
 
     # X축 카테고리 (수집시각 문자열)
