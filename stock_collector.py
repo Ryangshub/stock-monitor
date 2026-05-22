@@ -474,9 +474,8 @@ def update_chart(ws, price_col: int = 4, num_fmt: str = FMT_KRW):
     chart.width       = 22          # cm
     chart.height      = 14          # cm
     chart.y_axis.numFmt   = num_fmt
-    chart.y_axis.crossAx  = 100
-    chart.x_axis.crossAx  = 200
-    chart.x_axis.tickLblSkip = max(1, (max_row - min_row) // 10)  # 레이블 과밀 방지
+    # crossAx / tickLblSkip 은 openpyxl 자동 설정에 맡김
+    # (수동 지정 시 axId 불일치로 drawing*.xml 손상 발생)
 
     # 가격 시리즈 (컬럼 4 = 현재가 / 지수값)
     price_ref = Reference(ws, min_col=price_col, max_col=price_col,
