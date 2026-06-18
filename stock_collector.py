@@ -58,23 +58,27 @@ COLUMNS = [
     "수집시각", "종목코드", "종목명",
     "현재가", "거래량", "등락률(%)",
     "한달최고가", "분기최고가", "반기최고가",
+    "한달대비(%)", "경고",
 ]
-COL_WIDTHS = [19, 11, 18, 13, 15, 11, 13, 13, 13]
+COL_WIDTHS = [19, 11, 18, 13, 15, 11, 13, 13, 13, 11, 24]
 
 # KOSPI 지수 시트 컬럼 (현재가 → 지수값)
 KOSPI_COLUMNS = [
     "수집시각", "지수코드", "지수명",
     "지수값", "거래량", "등락률(%)",
     "한달최고가", "분기최고가", "반기최고가",
+    "한달대비(%)",
 ]
-KOSPI_COL_WIDTHS = [19, 11, 14, 13, 16, 11, 13, 13, 13]
+KOSPI_COL_WIDTHS = [19, 11, 14, 13, 16, 11, 13, 13, 13, 11]
 
 # 헤더 스타일
 HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
 HEADER_FONT = Font(bold=True, color="FFFFFF", name="맑은 고딕", size=10)
 # 짝수 행 교차 배경
-ALT_FILL = PatternFill("solid", fgColor="D6E4F0")
+ALT_FILL  = PatternFill("solid", fgColor="D6E4F0")
+WARN_FILL = PatternFill("solid", fgColor="FFD0D0")  # 경고 행 배경 (연한 빨강)
 DATA_FONT = Font(name="맑은 고딕", size=10)
+WARN_FONT = Font(bold=True, color="C00000", name="맑은 고딕", size=10)  # 경고 텍스트
 
 # 숫자 포맷
 FMT_KRW   = "#,##0"           # 원화 정수
@@ -262,16 +266,18 @@ def fetch_korean(code: str, name_hint: str = "") -> dict:
         sub = df[idx >= cutoff]
         return int(sub["고가"].max()) if not sub.empty else current_price
 
+    high_1m = high_since(30)
     return {
-        "code":        code,
-        "name":        stock_name,
-        "price":       current_price,
-        "volume":      volume,
-        "change_rate": change_rate,
-        "high_1m":     high_since(30),
-        "high_3m":     high_since(90),
-        "high_6m":     high_since(180),
-        "is_krw":      True,
+        "code":         code,
+        "name":         stock_name,
+        "price":        current_price,
+        "volume":       volume,
+        "change_rate":  change_rate,
+        "high_1m":      high_1m,
+        "high_3m":      high_since(90),
+        "high_6m":      high_since(180),
+        "high_1m_rate": round((current_price - high_1m) / high_1m * 100, 2) if high_1m else 0.0,
+        "is_krw":       True,
     }
 
 
@@ -310,16 +316,18 @@ def fetch_foreign(ticker: str, name_hint: str = "") -> dict:
         sub = hist[hist.index >= cutoff]
         return round(float(sub["High"].max()), 4) if not sub.empty else current_price
 
+    high_1m = high_since(30)
     return {
-        "code":        ticker,
-        "name":        name,
-        "price":       current_price,
-        "volume":      volume,
-        "change_rate": change_rate,
-        "high_1m":     high_since(30),
-        "high_3m":     high_since(90),
-        "high_6m":     high_since(180),
-        "is_krw":      False,
+        "code":         ticker,
+        "name":         name,
+        "price":        current_price,
+        "volume":       volume,
+        "change_rate":  change_rate,
+        "high_1m":      high_1m,
+        "high_3m":      high_since(90),
+        "high_6m":      high_since(180),
+        "high_1m_rate": round((current_price - high_1m) / high_1m * 100, 2) if high_1m else 0.0,
+        "is_krw":       False,
     }
 
 
@@ -334,12 +342,21 @@ def _safe_sheet_name(code: str, name: str) -> str:
 
 def ensure_stock_sheet(wb: openpyxl.Workbook, sheet_name: str,
                         columns=None, col_widths=None):
-    """종목 또는 지수 데이터 시트를 생성(없을 때만)하고 반환한다."""
-    if sheet_name in wb.sheetnames:
-        return wb[sheet_name]
-
+    """종목 또는 지수 데이터 시트를 생성하고 반환한다.
+    기존 시트는 누락된 컬럼 헤더(신규 컬럼)만 빈 위치에 추가한다."""
     cols   = columns   or COLUMNS
     widths = col_widths or COL_WIDTHS
+
+    if sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for col_idx, (header, width) in enumerate(zip(cols, widths), 1):
+            if not ws.cell(1, col_idx).value:
+                cell = ws.cell(1, col_idx, header)
+                cell.fill = HEADER_FILL
+                cell.font = HEADER_FONT
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                ws.column_dimensions[get_column_letter(col_idx)].width = width
+        return ws
 
     ws = wb.create_sheet(sheet_name)
     for col_idx, (header, width) in enumerate(zip(cols, widths), 1):
@@ -382,15 +399,17 @@ def fetch_kospi() -> dict:
                     sub = hist[hist.index >= cutoff]
                     return round(float(sub["High"].max()), 2) if not sub.empty else cur_val
 
+                _h1m = hi_yf(30)
                 return {
-                    "code":        "KOSPI",
-                    "name":        "KOSPI 종합지수",
-                    "price":       cur_val,
-                    "volume":      volume,
-                    "change_rate": change_rate,
-                    "high_1m":     hi_yf(30),
-                    "high_3m":     hi_yf(90),
-                    "high_6m":     hi_yf(180),
+                    "code":         "KOSPI",
+                    "name":         "KOSPI 종합지수",
+                    "price":        cur_val,
+                    "volume":       volume,
+                    "change_rate":  change_rate,
+                    "high_1m":      _h1m,
+                    "high_3m":      hi_yf(90),
+                    "high_6m":      hi_yf(180),
+                    "high_1m_rate": round((cur_val - _h1m) / _h1m * 100, 2) if _h1m else 0.0,
                 }
         except Exception as e:
             log.debug(f"yfinance KOSPI 실패, pykrx로 재시도: {e}")
@@ -427,15 +446,17 @@ def fetch_kospi() -> dict:
         sub = df[df.index >= cutoff]
         return round(float(sub["고가"].max()), 2) if not sub.empty else cur_val
 
+    _h1m_krx = hi_krx(30)
     return {
-        "code":        "1001",
-        "name":        "KOSPI 종합지수",
-        "price":       cur_val,
-        "volume":      volume,
-        "change_rate": change_rate,
-        "high_1m":     hi_krx(30),
-        "high_3m":     hi_krx(90),
-        "high_6m":     hi_krx(180),
+        "code":         "1001",
+        "name":         "KOSPI 종합지수",
+        "price":        cur_val,
+        "volume":       volume,
+        "change_rate":  change_rate,
+        "high_1m":      _h1m_krx,
+        "high_3m":      hi_krx(90),
+        "high_6m":      hi_krx(180),
+        "high_1m_rate": round((cur_val - _h1m_krx) / _h1m_krx * 100, 2) if _h1m_krx else 0.0,
     }
 
 
@@ -494,7 +515,7 @@ def update_chart(ws, price_col: int = 4, num_fmt: str = FMT_KRW):
                           min_row=min_row, max_row=max_row)
     chart.set_categories(cats_ref)
 
-    ws.add_chart(chart, "K1")
+    ws.add_chart(chart, "M1")
 
 
 def write_kospi_row(wb: openpyxl.Workbook, data: dict, collected_at: datetime):
@@ -514,13 +535,16 @@ def write_kospi_row(wb: openpyxl.Workbook, data: dict, collected_at: datetime):
         data["high_1m"],
         data["high_3m"],
         data["high_6m"],
+        data.get("high_1m_rate", 0.0),
     ]
     alignments = ["center", "center", "left",
                   "right",  "right",  "right",
-                  "right",  "right",  "right"]
+                  "right",  "right",  "right",
+                  "right"]
     formats    = [None, None, None,
                   FMT_IDX, FMT_KRW, FMT_RATE,
-                  FMT_IDX, FMT_IDX, FMT_IDX]
+                  FMT_IDX, FMT_IDX, FMT_IDX,
+                  FMT_RATE]
 
     use_alt = (next_row % 2 == 0)
     for col_idx, (val, align, fmt) in enumerate(zip(row_values, alignments, formats), 1):
@@ -535,14 +559,26 @@ def write_kospi_row(wb: openpyxl.Workbook, data: dict, collected_at: datetime):
     update_chart(ws, num_fmt=FMT_IDX)
 
 
-def write_row(wb: openpyxl.Workbook, data: dict, collected_at: datetime):
+def write_row(wb: openpyxl.Workbook, data: dict, collected_at: datetime,
+              kospi_1m_rate=None):
     sheet_name = _safe_sheet_name(data["code"], data["name"])
     ws         = ensure_stock_sheet(wb, sheet_name)
     next_row   = ws.max_row + 1
     is_krw     = data.get("is_krw", True)
 
-    price_fmt  = FMT_KRW if is_krw else FMT_USD
-    high_fmt   = FMT_KRW if is_krw else FMT_USD
+    price_fmt = FMT_KRW if is_krw else FMT_USD
+    high_fmt  = FMT_KRW if is_krw else FMT_USD
+
+    high_1m_rate = data.get("high_1m_rate", 0.0)
+
+    # 경고 판정: 종목의 한달최고가 대비 등락률이 KOSPI보다 5%p 이상 낮으면 경고
+    warn_text  = ""
+    is_warning = False
+    if kospi_1m_rate is not None:
+        diff = high_1m_rate - kospi_1m_rate
+        if diff < -5.0:
+            warn_text  = f"▼ KOSPI대비 {diff:+.1f}%p"
+            is_warning = True
 
     row_values = [
         collected_at.strftime("%Y-%m-%d %H:%M"),
@@ -554,26 +590,36 @@ def write_row(wb: openpyxl.Workbook, data: dict, collected_at: datetime):
         data["high_1m"],
         data["high_3m"],
         data["high_6m"],
+        high_1m_rate,
+        warn_text,
     ]
-    # col별 정렬·포맷 설정
     alignments = ["center", "center", "left",
                   "right", "right", "right",
-                  "right", "right", "right"]
+                  "right", "right", "right",
+                  "right", "left"]
     formats = [None, None, None,
                price_fmt, FMT_KRW, FMT_RATE,
-               high_fmt, high_fmt, high_fmt]
+               high_fmt, high_fmt, high_fmt,
+               FMT_RATE, None]
 
-    use_alt = (next_row % 2 == 0)
+    use_alt  = (next_row % 2 == 0)
+    row_fill = WARN_FILL if is_warning else (ALT_FILL if use_alt else None)
+
     for col_idx, (val, align, fmt) in enumerate(zip(row_values, alignments, formats), 1):
         cell = ws.cell(next_row, col_idx, val)
-        cell.font      = DATA_FONT
         cell.alignment = Alignment(horizontal=align, vertical="center")
         if fmt:
             cell.number_format = fmt
-        if use_alt:
-            cell.fill = ALT_FILL
+        if row_fill:
+            cell.fill = row_fill
+        # 경고 텍스트 셀은 굵은 빨강 폰트
+        cell.font = WARN_FONT if (is_warning and col_idx == len(COLUMNS)) else DATA_FONT
 
-    price_fmt = FMT_KRW if data.get("is_krw", True) else FMT_USD
+    if is_warning:
+        log.warning(
+            f"  ⚠ {data['name']}({data['code']}) 한달최고가 대비 KOSPI 초과 하락: {warn_text}"
+        )
+
     update_chart(ws, num_fmt=price_fmt)
 
 
@@ -598,10 +644,12 @@ def collect_once(excel_path: str):
         return
 
     ok, fail = 0, 0
+    kospi_1m_rate = None  # KOSPI 한달최고가 대비 등락률 (경고 기준선)
 
     # ── KOSPI 지수 수집 ────────────────────────────────────────────────────
     try:
-        kospi_data = fetch_kospi()
+        kospi_data    = fetch_kospi()
+        kospi_1m_rate = kospi_data.get("high_1m_rate")
         write_kospi_row(wb, kospi_data, now)
         log.info(
             f"  ✓ KOSPI 지수 | "
@@ -626,7 +674,7 @@ def collect_once(excel_path: str):
             if not data["name"] and name:
                 data["name"] = name
 
-            write_row(wb, data, now)
+            write_row(wb, data, now, kospi_1m_rate=kospi_1m_rate)
             log.info(
                 f"  ✓ {data['name']}({code}) | "
                 f"현재가: {data['price']:,.0f} | "
