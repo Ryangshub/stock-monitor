@@ -133,7 +133,9 @@ def create_template(path: str):
 
     # ── 관심종목 시트 ──────────────────────────────────────────────────────
     ws_wl = wb.create_sheet(WATCHLIST_SHEET, 1)
-    _header_row(ws_wl, 1, ["종목코드", "종목명"], widths=[14, 22])
+    _header_row(ws_wl, 1,
+                ["종목코드", "종목명", "등락률(%)", "한달대비(%)"],
+                widths=[14, 22, 11, 11])
 
     examples = [
         ("005930", "삼성전자"),
@@ -623,6 +625,62 @@ def write_row(wb: openpyxl.Workbook, data: dict, collected_at: datetime,
     update_chart(ws, num_fmt=price_fmt)
 
 
+# ─── 관심종목 시트 증감율 업데이트 ────────────────────────────────────────────
+_NO_FILL = PatternFill(fill_type=None)   # 셀 배경 초기화용
+
+def update_watchlist_rates(wb: openpyxl.Workbook, results: dict,
+                           kospi_1m_rate):
+    """관심종목 시트에 등락률(%)·한달대비(%)를 최신값으로 덮어쓴다.
+
+    KOSPI 한달대비(%) 대비 5%p 이상 하락한 종목의 '한달대비(%)' 셀은
+    붉은색으로 강조한다.  이전 경고 상태가 해제된 셀은 색상을 초기화한다.
+    """
+    if WATCHLIST_SHEET not in wb.sheetnames:
+        return
+    ws = wb[WATCHLIST_SHEET]
+
+    # C열: 등락률(%)  D열: 한달대비(%)  — 헤더가 없으면 추가
+    for col_idx, header, width in [
+        (3, "등락률(%)",  11),
+        (4, "한달대비(%)", 11),
+    ]:
+        if ws.cell(1, col_idx).value != header:
+            cell = ws.cell(1, col_idx, header)
+            cell.fill      = HEADER_FILL
+            cell.font      = HEADER_FONT
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    for row_idx in range(2, ws.max_row + 1):
+        code_val = ws.cell(row_idx, 1).value
+        if not code_val:
+            continue
+        code = str(code_val).strip()
+        if code not in results:
+            continue
+
+        item         = results[code]
+        change_rate  = item.get("change_rate",  0.0)
+        high_1m_rate = item.get("high_1m_rate", 0.0)
+
+        is_warning = (kospi_1m_rate is not None and
+                      high_1m_rate - kospi_1m_rate < -5.0)
+
+        # 등락률(%) 셀 (C열) — 일간 변동, 경고 색상 없음
+        cr = ws.cell(row_idx, 3, change_rate)
+        cr.font          = DATA_FONT
+        cr.alignment     = Alignment(horizontal="right", vertical="center")
+        cr.number_format = FMT_RATE
+        cr.fill          = _NO_FILL
+
+        # 한달대비(%) 셀 (D열) — KOSPI 조건 충족 시 붉은 배경·폰트
+        h1 = ws.cell(row_idx, 4, high_1m_rate)
+        h1.font          = WARN_FONT if is_warning else DATA_FONT
+        h1.alignment     = Alignment(horizontal="right", vertical="center")
+        h1.number_format = FMT_RATE
+        h1.fill          = WARN_FILL if is_warning else _NO_FILL
+
+
 # ─── 1회 수집 ────────────────────────────────────────────────────────────────
 def collect_once(excel_path: str):
     now = datetime.now()
@@ -662,6 +720,7 @@ def collect_once(excel_path: str):
         fail += 1
 
     # ── 관심종목 수집 ──────────────────────────────────────────────────────
+    collected = {}  # {code: data} — 관심종목 시트 업데이트에 사용
     for item in watchlist:
         code, name = item["code"], item["name"]
         try:
@@ -674,6 +733,7 @@ def collect_once(excel_path: str):
             if not data["name"] and name:
                 data["name"] = name
 
+            collected[code] = data
             write_row(wb, data, now, kospi_1m_rate=kospi_1m_rate)
             log.info(
                 f"  ✓ {data['name']}({code}) | "
@@ -684,6 +744,9 @@ def collect_once(excel_path: str):
         except Exception as e:
             log.error(f"  ✗ {code} ({name}) 수집 실패: {e}")
             fail += 1
+
+    # 관심종목 시트에 증감율 표시 및 경고 색상 업데이트
+    update_watchlist_rates(wb, collected, kospi_1m_rate)
 
     try:
         wb.save(excel_path)
